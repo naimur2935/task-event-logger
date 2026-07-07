@@ -82,7 +82,7 @@ export default function App() {
 
   const totalPages = Math.max(1, Math.ceil(filteredTasks.length / itemsPerPage));
   const startIndex = (currentPage - 1) * itemsPerPage;
-  const paginatedTasks = filteredTasks.slice(startIndex, startIndex + itemsPerPage);
+  const paginatedTasks = (filteredTasks ? filteredTasks : tasks).slice(startIndex, startIndex + itemsPerPage);
 
   useEffect(() => {
     setCurrentPage((prev) => Math.min(prev, totalPages));
