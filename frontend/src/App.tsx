@@ -13,7 +13,6 @@ const filterOptions: { label: string; value: TaskStatus | "all" }[] = [
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [filteredTasks, setFilteredTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -27,7 +26,7 @@ export default function App() {
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const itemsPerPage = 6;
+  const itemsPerPage = 5;
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -70,27 +69,15 @@ export default function App() {
     setCurrentPage(1);
   }, [selectedFilter, searchQuery]);
 
-  useEffect(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-
-    const byStatus =
-      selectedFilter === "all"
-        ? tasks
-        : tasks.filter((task) => task.status === selectedFilter);
-
-    if (!normalizedQuery) {
-      setFilteredTasks(byStatus);
-      return;
-    }
-
-    const filtered = byStatus.filter((task) => {
-      const haystack =
-        `${task.title} ${task.description} ${task.status}`.toLowerCase();
-
-      return haystack.includes(normalizedQuery);
-    });
-
-    setFilteredTasks(filtered);
+  const filteredTasks = useMemo(() => { 
+    const normalizedQuery = searchQuery.trim().toLowerCase(); 
+    const byStatus = selectedFilter === "all" ? tasks : tasks.filter((task) => task.status === selectedFilter); 
+    if (!normalizedQuery) { 
+      return byStatus; 
+    } 
+    return byStatus.filter((task) => { 
+      const haystack = `${task.title} ${task.description} ${task.status}`.toLowerCase(); return haystack.includes(normalizedQuery); 
+    }); 
   }, [searchQuery, selectedFilter, tasks]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTasks.length / itemsPerPage));
