@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { Task, ActivityLog, TaskStatus } from "./types";
 import { fetchTasks, fetchLogs, toggleTask, createTask, updateTask, deleteTask } from "./api";
 import TaskList from "./components/TaskList";
@@ -13,41 +13,93 @@ const filterOptions: { label: string; value: TaskStatus | "all" }[] = [
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [filteredTasks, setFilteredTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedFilter, setSelectedFilter] = useState<TaskStatus | "all">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const itemsPerPage = 6;
+
   const loadData = useCallback(async () => {
-    try {
-      const [tasksData, logsData] = await Promise.all([fetchTasks(), fetchLogs()]);
-      setTasks(tasksData);
-      setLogs(logsData);
-      setError(null);
-    } catch (err) {
-      setError("Could not reach the backend. Is the API running on the expected port?");
-    } finally {
-      setLoading(false);
+    setLoading(true);
+    setError(null);
+
+    const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+    // keep retrying until we successfully fetch data or the component unmounts
+    while (!abortRef.current) {
+      try {
+        const [tasksData, logsData] = await Promise.all([fetchTasks(), fetchLogs()]);
+        if (abortRef.current) return;
+        setTasks(tasksData);
+        setLogs(logsData);
+        setError(null);
+        break; // success
+      } catch (err) {
+        // show a transient message but keep retrying
+        setError("Could not reach the backend. Retrying...");
+        // wait a bit before retrying
+        // eslint-disable-next-line no-await-in-loop
+        await wait(1000);
+      }
     }
+
+    if (!abortRef.current) setLoading(false);
   }, []);
 
+  const abortRef = useRef(false);
+
   useEffect(() => {
+    abortRef.current = false;
     loadData();
+    return () => {
+      abortRef.current = true;
+    };
   }, [loadData]);
 
-  const filteredTasks = useMemo(
-    () =>
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedFilter, searchQuery]);
+
+  useEffect(() => {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+
+    const byStatus =
       selectedFilter === "all"
         ? tasks
-        : tasks.filter((task) => task.status === selectedFilter),
-    [selectedFilter, tasks]
-  );
+        : tasks.filter((task) => task.status === selectedFilter);
+
+    if (!normalizedQuery) {
+      setFilteredTasks(byStatus);
+      return;
+    }
+
+    const filtered = byStatus.filter((task) => {
+      const haystack =
+        `${task.title} ${task.description} ${task.status}`.toLowerCase();
+
+      return haystack.includes(normalizedQuery);
+    });
+
+    setFilteredTasks(filtered);
+  }, [searchQuery, selectedFilter, tasks]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / itemsPerPage));
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedTasks = filteredTasks.slice(startIndex, startIndex + itemsPerPage);
+
+  useEffect(() => {
+    setCurrentPage((prev) => Math.min(prev, totalPages));
+  }, [totalPages]);
 
   const refreshLogs = async () => {
     try {
@@ -165,6 +217,21 @@ export default function App() {
 
       <main className="mx-auto grid max-w-6xl grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
         <section>
+          <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-ink/10 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <label className="flex-1 text-sm text-ink/70">
+              <input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search by title, description, or status"
+                className="w-full rounded-full border border-ink/10 bg-ink/5 px-4 py-2.5 text-sm outline-none transition focus:border-ink/20 focus:bg-white"
+              />
+            </label>
+            <div className="text-sm text-ink/60 sm:text-right">
+              <p className="font-medium text-ink">{filteredTasks.length} result{filteredTasks.length === 1 ? "" : "s"}</p>
+              <p>Showing page {currentPage} of {totalPages}</p>
+            </div>
+          </div>
+
           <div className="mb-5 flex flex-wrap gap-2">
             {filterOptions.map((option) => (
               <button
@@ -172,8 +239,8 @@ export default function App() {
                 type="button"
                 onClick={() => setSelectedFilter(option.value)}
                 className={`rounded-full px-4 py-2 text-sm font-medium transition ${selectedFilter === option.value
-                    ? "bg-ink text-white"
-                    : "border border-ink/10 bg-white text-ink hover:border-ink/20"
+                  ? "bg-ink text-white"
+                  : "border border-ink/10 bg-white text-ink hover:border-ink/20"
                   }`}
               >
                 {option.label}
@@ -183,13 +250,52 @@ export default function App() {
 
           <h2 className="mb-3 font-display text-base font-semibold text-ink">Tasks</h2>
           <TaskList
-            tasks={filteredTasks}
+            tasks={paginatedTasks}
             onToggle={handleToggle}
             onEdit={openEditModal}
             onDelete={handleDelete}
             updatingId={updatingId}
             loading={loading}
           />
+
+          {filteredTasks.length > itemsPerPage && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink/10 bg-white p-3 shadow-sm">
+              <p className="text-sm text-ink/60">
+                Showing {startIndex + 1}-{Math.min(startIndex + itemsPerPage, filteredTasks.length)} of {filteredTasks.length}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                  disabled={currentPage === 1}
+                  className="rounded-full border border-ink/10 px-3 py-1.5 text-sm text-ink transition hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                {Array.from({ length: totalPages }, (_, index) => index + 1).map((page) => (
+                  <button
+                    key={page}
+                    type="button"
+                    onClick={() => setCurrentPage(page)}
+                    className={`h-8 w-8 rounded-full text-sm font-medium transition ${currentPage === page
+                      ? "bg-ink text-white"
+                      : "border border-ink/10 text-ink hover:bg-ink/5"
+                      }`}
+                  >
+                    {page}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                  disabled={currentPage === totalPages}
+                  className="rounded-full border border-ink/10 px-3 py-1.5 text-sm text-ink transition hover:bg-ink/5 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="lg:sticky lg:top-10 lg:h-[calc(100vh-8rem)]">
